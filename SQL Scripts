@@ -1,13 +1,13 @@
 
--- Data Validation Checks
+-------------------------------------------------------------------------Data Validation Checks------------------------------------------------------------------------------------------
 
-Missing Funds
+--Missing Funds
 
 select fundnumber as Missing_Funds from ( select fundnumber from troweprice_cleanse.master_fund_list minus select distinct(<<CDP_INGESTION_RULE_COLUMN_NAME>>) 
 from FILE_RULE_EXECUTE_TABLE 
 where <<CDP_INGESTION_RULE_COLUMN_NAME>> is not null)
 
-Invalid Funds
+--Invalid Funds
 
 select fundnumber as Invalid_Funds from ( select distinct(<<CDP_INGESTION_RULE_COLUMN_NAME>>) 
 from FILE_RULE_EXECUTE_TABLE
@@ -132,7 +132,7 @@ minus
 select productkey,contractmultiplier from prior_quarter where Rnk = 2
  
 
-
+---------------------------------------------------------------------Practice Questions-------------------------------------------------------------------------------------------------------
 
 --Finding Updated Records
 
