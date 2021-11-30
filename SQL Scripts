@@ -1,0 +1,262 @@
+
+-- Data Validation Checks
+
+Missing Funds
+
+select fundnumber as Missing_Funds from ( select fundnumber from troweprice_cleanse.master_fund_list minus select distinct(<<CDP_INGESTION_RULE_COLUMN_NAME>>) 
+from FILE_RULE_EXECUTE_TABLE where <<CDP_INGESTION_RULE_COLUMN_NAME>> is not null)
+
+Invalid Funds
+
+select fundnumber as Invalid_Funds from ( select distinct(<<CDP_INGESTION_RULE_COLUMN_NAME>>) 
+from FILE_RULE_EXECUTE_TABLE
+where <<CDP_INGESTION_RULE_COLUMN_NAME>> is not null minus select fundnumber from troweprice_cleanse.master_fund_list
+)
+
+--Account Classification Check
+
+SELECT account FROM (
+SELECT distinct account, case when left(account,2)='91' then 'Asset' when left(account,2)='92' then 'Liability' when left(account,2)='92' then 'Liability' 
+when left(account,2)='93' then 'Income' when left(account,2)='94' then 'Expenses' when left(account,2)='95' then 'Capital' ELSE 'Invalid Classification' END  IND 
+FROM FILE_RULE_EXECUTE_TABLE
+)T 
+WHERE T.IND = 'Invalid Classification'
+
+--Record count validation 
+
+select T.rec_cnt_diff from  (
+select ((select rec_cnt FROM FILE_RULE_EXECUTE_TABLE_OP2) - (select rec_cnt FROM FILE_RULE_EXECUTE_TABLE_OP1)) as rec_cnt_diff
+) T
+where T.rec_cnt_diff <> 0
+
+--Missing Yard ID
+
+select distinct (<<CDP_INGESTION_RULE_COLUMN_NAME>>) as missing_yardiid from FILE_RULE_EXECUTE_TABLE
+where <<CDP_INGESTION_RULE_COLUMN_NAME>> is not null minus select distinct fdf_client_specific_yardiid from starwood_cdm.entity_master 
+where fdf_client_specific_yardiid is not null
+
+
+--Transaction_Id_External_Transaction_ID_Uniqueness_Check
+
+select transactionid,externaltransactionid, count(*) as duplicate_count from 
+FILE_RULE_EXECUTE_TABLE group by transactionid,externaltransactionid 
+having COUNT(*) > 1
+
+--Missing Funds
+
+select distinct entityidparent as missing_entityid, entitynameparent as missing_entityname from FILE_RULE_EXECUTE_TABLE as a
+where not exists (select distinct 1 from starwood_cdm.entity_master b
+where b.fdf_client_specific_farentityid=a.entityidparent and b.entity_master_name=a.entitynameparent and b.fdf_client_specific_farentityid is not null and b.entity_master_name is not null)
+and entityidparent is not null and entitynameparent is not null
+
+union
+
+select distinct entityidchild, entitynamechild from FILE_RULE_EXECUTE_TABLE as a
+where not exists (select distinct 1 from starwood_cdm.entity_master b 
+where b.fdf_client_specific_farentityid=a.entityidchild and b.entity_master_name=a.entitynamechild and b.fdf_client_specific_farentityid is not null and b.entity_master_name is not null)
+and entityidchild is not null and entitynamechild is not null
+
+
+--Missing companyid
+
+select distinct REPLACE(LTRIM (REPLACE(<<CDP_INGESTION_RULE_COLUMN_NAME>>,'0',' ')),' ','0') as missing_jdeid 
+from FILE_RULE_EXECUTE_TABLE
+where <<CDP_INGESTION_RULE_COLUMN_NAME>> is not null minus select distinct REPLACE(LTRIM (REPLACE(fdf_client_specific_jdeid,'0',' ')),' ','0') 
+from xyz_cdm.entity_master where fdf_client_specific_jdeid is not null
+
+--Country of Risk - referential integrity
+
+SELECT count(t1.<<CDP_INGESTION_RULE_COLUMN_NAME>>) FROM FILE_RULE_EXECUTE_TABLE t1 
+LEFT JOIN goldman_cleanse.calibrate_gs_iso_2_country_codes t2 ON t2.internationalorganizationforstandardization2countrycode = t1.<<CDP_INGESTION_RULE_COLUMN_NAME>> 
+WHERE t2.internationalorganizationforstandardization2countrycode IS NULL
+
+--Maturity Date Range Check
+
+Select count(maturitydateeffective) from FILE_RULE_EXECUTE_TABLE where maturitydateeffective!='(null)' and
+TO_DATE(CAST(UNIX_TIMESTAMP(maturitydateeffective, 'MM/dd/yyyy') AS TIMESTAMP)) < (SELECT max(seq_date) from goldman_cleanse.DATE_DIM
+where year = (Select EXTRACT(YEAR FROM auditingdt) from goldman_ingestion.product order by auditingdt desc limit 1)
+and month = (Select EXTRACT(MONTH FROM auditingdt) from goldman_ingestion.product order by auditingdt desc limit 1))
+
+
+--Liquidity percentage values cannot be negative
+
+select accountid from FILE_RULE_EXECUTE_TABLE where float(dtl01) < 0.0 OR float(dtl27) < 0.0 OR float(dtl830) < 0.0 OR float(dtl3190) < 0.0
+ OR float(dtl91180) < 0.0 OR float(dtl181365) < 0.0 OR float(dtl365plus) < 0.0
+ 
+
+--New products regulatory classification - Period over Period
+
+WITH temp_view AS 
+    (SELECT productkey, DENSE_RANK() OVER (ORDER BY auditingdt Desc) AS Rnk
+         FROM FILE_RULE_EXECUTE_TABLE), qoq_variance AS (SELECT productkey FROM temp_view WHERE Rnk=1 minus 
+ SELECT productkey FROM temp_view WHERE Rnk=2) SELECT count(*) FROM qoq_variance
+
+
+--Missing contract size for options and futures
+select productkey, shortdescription, instrumentsubtype from FILE_RULE_EXECUTE_TABLE 
+where callputflag != '(null)' and contractmultiplier = '(null)'  and instrumentsubtype not in ('SWAPTION', 'FXOPTION')
+
+
+--GSH Level / BBIndSubgroup Fin DQ check
+
+select count(*) from FILE_RULE_EXECUTE_TABLE 
+where ((lower(gshlevel4) like 'fin%' or lower(gshlevel5) like 'fin%' or lower(gshlevel6) like 'fin%') and lower(bbindsubgroup) not like '%finance%')
+ OR ((lower(gshlevel4) not like 'fin%' or lower(gshlevel5) not like 'fin%' or lower(gshlevel6) not like 'fin%') and lower(bbindsubgroup) like '%finance%')
+
+--Duplicate key check
+
+SELECT count(<<CDP_INGESTION_RULE_COLUMN_NAME>>) 
+FROM FILE_RULE_EXECUTE_TABLE 
+GROUP BY <<CDP_INGESTION_RULE_COLUMN_NAME>>, auditingdt 
+HAVING COUNT(<<CDP_INGESTION_RULE_COLUMN_NAME>>)>1
+
+
+--QoQ variance contract multiplier by product key 
+
+with  current_quarter as
+ (select *, dense_rank() over (order by auditingdt desc) as Rnk from FILE_RULE_EXECUTE_TABLE),
+ prior_quarter as
+ (select *, dense_rank() over (order by auditingdt desc) as Rnk from FILE_RULE_EXECUTE_TABLE)
+
+select productkey,contractmultiplier from current_quarter where Rnk = 1
+minus
+select productkey,contractmultiplier from prior_quarter where Rnk = 2
+ 
+
+
+
+--Finding Updated Records
+
+--We have a table with employees and their salaries, however, some of the records are old and contain outdated salary information. Find the current salary of each employee
+ --assuming that salaries increase each year. Output their id, first name, last name, department ID, and current salary. Order your list by employee ID in ascending order.
+
+select id, first_name, last_name, department_id, salary 
+from 
+    (Select *, RANK()
+        over (partition by id order by salary desc) as rnk
+from ms_employee_salary) fnl
+where fnl.rnk = 1
+order by fnl.id;
+
+
+--Bottom 2 Companies By Mobile Usage
+
+--Write a query that returns a list of the bottom 2 companies by mobile usage. Mobile usage is defined as the number of events registered on a mobile client_id. 
+--Order the result by the number of events ascending. In the case where there are multiple companies tied for the bottom ranks (rank 1 or 2), return all the companies.
+
+
+select customer_id, events
+from 
+    (Select customer_id , count(*) as events,RANK()
+            over (order by count(*) ) as rnk
+    from fact_events
+    where  client_id = 'mobile'
+    group by customer_id) fnl
+where fnl.rnk <=3;
+
+
+
+--Top Company Where Users Use Desktop Only
+
+--Write a query that returns the top company in terms of events where users use desktop only.
+        
+ select customer_id
+from 
+(
+Select customer_id, count(*) as events, Rank()
+over (order by Count(*) desc) rnk
+from fact_events
+where client_id = 'desktop'
+group by customer_id) fnl
+where fnl.rnk = 1;
+
+
+--Premium vs Freemium
+
+--Find the total number of downloads for paying and non-paying users by date. Include only records where non-paying customers have more downloads than paying customers. 
+--The output should be sorted by earliest date first and contain 3 columns date, non-paying downloads, paying downloads.
+
+SELECT date, non_paying,paying
+FROM
+  (SELECT date, sum(CASE
+                        WHEN paying_customer = 'yes' THEN downloads
+                    END) AS paying,
+                sum(CASE
+                        WHEN paying_customer = 'no' THEN downloads
+                    END) AS non_paying
+   FROM ms_user_dimension a
+   INNER JOIN ms_acc_dimension b ON a.acc_id = b.acc_id
+   INNER JOIN ms_download_facts c ON a.user_id=c.user_id
+   GROUP BY date
+   ORDER BY date) t
+WHERE (non_paying - paying) >0
+ORDER BY t.date ASC
+
+
+
+
+--New And Existing Users
+
+--Calculate the share of new and existing users. Output the month, share of new users, and share of existing users as a ratio. New users are defined as users who started using services 
+--in the current month. Existing users are users who started using services in current month and used services in any previous month. Assume that the dates are all from the year 2020.
+
+--1. Rank over partition by user_id ordered by month asc --> first month of usage
+--2. Ratio of those with Rank 1 v. others over total users by month
+
+select month, 
+    cast(sum(case when ranking = 1 then 1 else 0 end) as float) / cast(count(*) as float) as new_share,
+    cast(sum(case when ranking <> 1 then 1 else 0 end) as float) / cast(count(*) as float) as existing_share
+from (select distinct user_id, 
+        extract(month from time_id) as month, 
+        rank() over(partition by user_id order by extract(month from time_id) asc) as ranking
+    from fact_events) a
+group by month
+order by month asc
+
+
+
+--Finding User Purchases
+
+--Write a query that will identify returning active users. A returning active user is a user that has made a second purchase within 7 days of any other of their purchases.
+-- Output a list of user_ids of these returning active users.
+ 
+select user_id from (
+        Select user_id, created_at - LAG (created_at) OVER (PARTITION BY 
+user_id ORDER BY created_at ) as days_elapsed 
+from amazon_transactions) a
+group by user_id 
+having min(days_elapsed)<=7;
+
+
+--The Most Expensive Products Per Category
+--Find the most expensive products on Amazon for each product category
+
+WITH cte AS
+    (select product_category, product_name, ltrim(price,'$')::numeric price
+from innerwear_amazon_com)
+
+SELECT product_category,
+       product_name,
+       price
+FROM
+  (SELECT cte.product_category,
+          cte.product_name,
+          cte.price,
+          row_number() OVER (PARTITION BY cte.product_category
+                             ORDER BY cte.price DESC) AS ROW
+   FROM cte) sq
+WHERE ROW = 1
+
+
+--Find the number of violations that each school had
+
+--Find the number of violations that each school had. Any inspection is considered a violation if its risk category is not null.
+--Output the corresponding business name along with the result.
+--Order the result based on the number of violations in descending order.
+
+ Select business_name,  count(case when risk_category IS NOT NULL THEN 1 ELSE 0 END)
+       AS number_violations
+       from sf_restaurant_health_violations
+    where business_name ILIKE '%school%' AND risk_category is NOT NULL
+    Group by business_name
+    order by number_violations desc;
