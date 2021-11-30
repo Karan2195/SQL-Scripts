@@ -4,7 +4,8 @@
 Missing Funds
 
 select fundnumber as Missing_Funds from ( select fundnumber from troweprice_cleanse.master_fund_list minus select distinct(<<CDP_INGESTION_RULE_COLUMN_NAME>>) 
-from FILE_RULE_EXECUTE_TABLE where <<CDP_INGESTION_RULE_COLUMN_NAME>> is not null)
+from FILE_RULE_EXECUTE_TABLE 
+where <<CDP_INGESTION_RULE_COLUMN_NAME>> is not null)
 
 Invalid Funds
 
@@ -46,14 +47,16 @@ having COUNT(*) > 1
 
 select distinct entityidparent as missing_entityid, entitynameparent as missing_entityname from FILE_RULE_EXECUTE_TABLE as a
 where not exists (select distinct 1 from starwood_cdm.entity_master b
-where b.fdf_client_specific_farentityid=a.entityidparent and b.entity_master_name=a.entitynameparent and b.fdf_client_specific_farentityid is not null and b.entity_master_name is not null)
+where b.fdf_client_specific_farentityid=a.entityidparent and b.entity_master_name=a.entitynameparent
+ and b.fdf_client_specific_farentityid is not null and b.entity_master_name is not null)
 and entityidparent is not null and entitynameparent is not null
 
-union
+UNION
 
 select distinct entityidchild, entitynamechild from FILE_RULE_EXECUTE_TABLE as a
 where not exists (select distinct 1 from starwood_cdm.entity_master b 
-where b.fdf_client_specific_farentityid=a.entityidchild and b.entity_master_name=a.entitynamechild and b.fdf_client_specific_farentityid is not null and b.entity_master_name is not null)
+where b.fdf_client_specific_farentityid=a.entityidchild and b.entity_master_name=a.entitynamechild
+ and b.fdf_client_specific_farentityid is not null and b.entity_master_name is not null)
 and entityidchild is not null and entitynamechild is not null
 
 
@@ -67,20 +70,26 @@ from xyz_cdm.entity_master where fdf_client_specific_jdeid is not null
 --Country of Risk - referential integrity
 
 SELECT count(t1.<<CDP_INGESTION_RULE_COLUMN_NAME>>) FROM FILE_RULE_EXECUTE_TABLE t1 
-LEFT JOIN goldman_cleanse.calibrate_gs_iso_2_country_codes t2 ON t2.internationalorganizationforstandardization2countrycode = t1.<<CDP_INGESTION_RULE_COLUMN_NAME>> 
+LEFT JOIN client_name_cleanse.calibrate_gs_iso_2_country_codes t2 
+ON 
+t2.internationalorganizationforstandardization2countrycode = t1.<<CDP_INGESTION_RULE_COLUMN_NAME>> 
 WHERE t2.internationalorganizationforstandardization2countrycode IS NULL
 
 --Maturity Date Range Check
 
-Select count(maturitydateeffective) from FILE_RULE_EXECUTE_TABLE where maturitydateeffective!='(null)' and
-TO_DATE(CAST(UNIX_TIMESTAMP(maturitydateeffective, 'MM/dd/yyyy') AS TIMESTAMP)) < (SELECT max(seq_date) from goldman_cleanse.DATE_DIM
-where year = (Select EXTRACT(YEAR FROM auditingdt) from goldman_ingestion.product order by auditingdt desc limit 1)
-and month = (Select EXTRACT(MONTH FROM auditingdt) from goldman_ingestion.product order by auditingdt desc limit 1))
+Select count(maturitydateeffective) 
+from FILE_RULE_EXECUTE_TABLE where maturitydateeffective!='(null)' 
+AND
+TO_DATE(CAST(UNIX_TIMESTAMP(maturitydateeffective, 'MM/dd/yyyy') AS TIMESTAMP)) < (SELECT max(seq_date) from client_name_cleanse.DATE_DIM
+where year = (Select EXTRACT(YEAR FROM auditingdt) from client_name_ingestion.product order by auditingdt desc limit 1)
+AND
+ month = (Select EXTRACT(MONTH FROM auditingdt) from client_name_ingestion.product order by auditingdt desc limit 1))
 
 
 --Liquidity percentage values cannot be negative
 
-select accountid from FILE_RULE_EXECUTE_TABLE where float(dtl01) < 0.0 OR float(dtl27) < 0.0 OR float(dtl830) < 0.0 OR float(dtl3190) < 0.0
+select accountid from FILE_RULE_EXECUTE_TABLE 
+where float(dtl01) < 0.0 OR float(dtl27) < 0.0 OR float(dtl830) < 0.0 OR float(dtl3190) < 0.0
  OR float(dtl91180) < 0.0 OR float(dtl181365) < 0.0 OR float(dtl365plus) < 0.0
  
 
@@ -127,8 +136,9 @@ select productkey,contractmultiplier from prior_quarter where Rnk = 2
 
 --Finding Updated Records
 
---We have a table with employees and their salaries, however, some of the records are old and contain outdated salary information. Find the current salary of each employee
- --assuming that salaries increase each year. Output their id, first name, last name, department ID, and current salary. Order your list by employee ID in ascending order.
+--We have a table with employees and their salaries, however, some of the records are old and contain outdated salary information. Find the current salary of
+ --each employee assuming that salaries increase each year. Output their id, first name, last name, department ID, and current salary. Order your list by 
+ --employee ID in ascending order.
 
 select id, first_name, last_name, department_id, salary 
 from 
